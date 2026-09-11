@@ -1,0 +1,13 @@
+[Unit]
+Description=usrr - resident Gemini agent for one Linux user
+
+[Service]
+Type=simple
+Environment=PATH=%h/.bun/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart="@@BUN_PATH@@" run "@@REPO_ROOT@@/src/index.ts"
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+
+[Install]
+WantedBy=default.target
