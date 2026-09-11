@@ -1,16 +1,18 @@
 import { AgyRunner } from "./agy";
 import { startApiServer } from "./api/server";
 import { log } from "./log";
-import { agentCwd, socketPath, statePath } from "./paths";
+import { agentCwd, socketPath, statePath, transcriptPath } from "./paths";
 import { UsrrService } from "./service";
 import { loadState, recoverState, saveState } from "./state";
+import { TranscriptStore } from "./transcript";
 
 async function main(): Promise<void> {
   const resolvedStatePath = statePath();
   const resolvedSocketPath = socketPath();
   const recovered = recoverState(await loadState(resolvedStatePath));
   await saveState(resolvedStatePath, recovered);
-  const service = new UsrrService(recovered, resolvedStatePath, new AgyRunner(agentCwd()));
+  const transcript = await TranscriptStore.open(transcriptPath());
+  const service = new UsrrService(recovered, resolvedStatePath, new AgyRunner(agentCwd()), transcript);
   const started = await startApiServer(service, resolvedSocketPath);
   if (!started.ok) throw new Error(started.error);
   log("info", `USRR daemon started: state="${resolvedStatePath}" socket="${resolvedSocketPath}" agent=agy`);

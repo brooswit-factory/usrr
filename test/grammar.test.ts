@@ -8,4 +8,13 @@ describe("CLI grammar", () => {
     expect(parseArgv(["message", "--no-wait", "hello"])).toEqual({ ok: true, command: { kind: "message", text: "hello", wait: false } });
   });
   test("rejects invalid waits", () => expect(parseArgv(["wait", "later"]).ok).toBe(false));
+  test("parses history limits and JSON output", () => {
+    expect(parseArgv(["history"])).toEqual({ ok: true, command: { kind: "history", limit: 20, json: false } });
+    expect(parseArgv(["history", "5", "--json"])).toEqual({ ok: true, command: { kind: "history", limit: 5, json: true } });
+    expect(parseArgv(["history", "0"]).ok).toBe(false);
+  });
+  test("parses follow output modes", () => {
+    expect(parseArgv(["follow"])).toEqual({ ok: true, command: { kind: "follow", json: false } });
+    expect(parseArgv(["follow", "--json"])).toEqual({ ok: true, command: { kind: "follow", json: true } });
+  });
 });

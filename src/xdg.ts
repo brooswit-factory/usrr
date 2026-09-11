@@ -20,6 +20,10 @@ export function stateFilePath(inputs: XdgInputs): string {
   return join(configured(inputs.stateHome, join(inputs.home, ".local", "state")), "usrr", "state.json");
 }
 
+export function transcriptFilePath(inputs: XdgInputs): string {
+  return join(configured(inputs.stateHome, join(inputs.home, ".local", "state")), "usrr", "transcript.jsonl");
+}
+
 export function apiSocketPath(inputs: XdgInputs): string {
   return join(configured(inputs.runtimeDir, inputs.runtimeFallbackBase), "usrr", "api.sock");
 }

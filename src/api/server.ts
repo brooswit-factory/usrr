@@ -17,6 +17,11 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 function apiResponse<T>(result: ApiResult<T>): Response { return json(result, result.ok ? 200 : STATUS_FOR_ERROR[result.error.kind]); }
+function positiveInteger(value: string | null): number | undefined {
+  if (value === null || !/^\d+$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
 async function bodyObject(request: Request): Promise<Record<string, unknown> | undefined> {
   try {
     const value = JSON.parse(await request.text()) as unknown;
@@ -42,6 +47,40 @@ export async function startApiServer(service: UsrrService, socketPath: string): 
         const url = new URL(request.url);
         if (request.method === API_ROUTES.status.method && url.pathname === API_ROUTES.status.path) return apiResponse({ ok: true, result: service.status() });
         if (request.method === API_ROUTES.attachTarget.method && url.pathname === API_ROUTES.attachTarget.path) return apiResponse(service.attachTarget());
+        if (request.method === API_ROUTES.history.method && url.pathname === API_ROUTES.history.path) {
+          const limit = positiveInteger(url.searchParams.get("limit"));
+          if (limit === undefined || limit > 1000) {
+            return apiResponse({ ok: false, error: { kind: "invalid-request", message: "history limit must be an integer from 1 to 1000" } });
+          }
+          return apiResponse(await service.history(limit));
+        }
+        if (request.method === API_ROUTES.follow.method && url.pathname === API_ROUTES.follow.path) {
+          let unsubscribe: (() => void) | undefined;
+          let heartbeat: ReturnType<typeof setInterval> | undefined;
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              unsubscribe = service.follow((event) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`)));
+              heartbeat = setInterval(() => {
+                try { controller.enqueue(encoder.encode("\n")); }
+                catch {
+                  if (heartbeat) clearInterval(heartbeat);
+                  unsubscribe?.();
+                }
+              }, 5_000);
+            },
+            cancel() {
+              if (heartbeat) clearInterval(heartbeat);
+              unsubscribe?.();
+            },
+          });
+          return new Response(stream, {
+            headers: {
+              "content-type": "application/x-ndjson",
+              "cache-control": "no-store",
+            },
+          });
+        }
         if (request.method === API_ROUTES.message.method && url.pathname === API_ROUTES.message.path) {
           const body = await bodyObject(request);
           if (!body || typeof body.text !== "string" || body.text.trim().length === 0 || (body.wait !== undefined && typeof body.wait !== "boolean")) {

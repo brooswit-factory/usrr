@@ -15,5 +15,6 @@ export function currentXdgInputs(): xdg.XdgInputs {
 }
 
 export const statePath = (): string => xdg.stateFilePath(currentXdgInputs());
+export const transcriptPath = (): string => xdg.transcriptFilePath(currentXdgInputs());
 export const socketPath = (): string => xdg.apiSocketPath(currentXdgInputs());
 export const agentCwd = (): string => nonEmpty(process.env["USRR_AGENT_CWD"]) ?? homedir();

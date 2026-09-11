@@ -1,3 +1,5 @@
+import type { TranscriptEvent } from "../transcript";
+
 export type AgentStatus = "absent" | "idle" | "working" | "error";
 export interface PublicStatus { readonly status: AgentStatus; readonly updatedAt: string; readonly error?: string }
 export type ApiErrorKind = "absent" | "busy" | "invalid-request" | "agent-failed" | "internal-error";
@@ -7,12 +9,15 @@ export type StatusResult = ApiResult<PublicStatus>;
 export type MessageResult = ApiResult<{ readonly accepted: true; readonly response?: string }>;
 export type WaitResult = ApiResult<PublicStatus>;
 export type AttachTargetResult = ApiResult<{ readonly conversationId: string }>;
+export type HistoryResult = ApiResult<{ readonly events: readonly TranscriptEvent[] }>;
 
 export const API_ROUTES = {
   status: { method: "GET", path: "/v1/status" },
   message: { method: "POST", path: "/v1/message" },
   wait: { method: "POST", path: "/v1/wait" },
   attachTarget: { method: "GET", path: "/v1/attach-target" },
+  history: { method: "GET", path: "/v1/history" },
+  follow: { method: "GET", path: "/v1/follow" },
 } as const;
 
 export const STATUS_FOR_ERROR: Record<ApiErrorKind, number> = {
