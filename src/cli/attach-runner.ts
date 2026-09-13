@@ -1,8 +1,10 @@
-import { AgyRunner } from "../agy";
+import type { ManagedAgentProvider } from "@brooswit/drovr";
+import { conversationRunner } from "../conversation";
 import { agentCwd } from "../paths";
 
-export async function attach(conversationId: string): Promise<number> {
-  const argv = new AgyRunner(agentCwd()).attachArgv(conversationId);
-  const process = Bun.spawn(argv, { cwd: agentCwd(), stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+export async function attach(conversationId: string, provider: ManagedAgentProvider = "agy"): Promise<number> {
+  const cwd = agentCwd();
+  const argv = conversationRunner(provider, cwd).attachArgv(conversationId);
+  const process = Bun.spawn(argv, { cwd, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
   return await process.exited;
 }

@@ -44,6 +44,16 @@ function fakeIo(): { io: CliIO; stdout: string[]; stderr: string[] } {
 }
 
 describe("history and follow CLI", () => {
+  test("attach uses the daemon's native provider, defaulting legacy targets to AGY", async () => {
+    for (const provider of [undefined, "agy", "codex", "claude"] as const) {
+      const { io } = fakeIo();
+      const calls: unknown[] = [];
+      const terminal: CliIO = { ...io, stdinIsTTY: true, stdoutIsTTY: true, attach: async (id, selected) => { calls.push([id, selected]); return 0; } };
+      const api = fakeApi({ attachTarget: () => successful({ ok: true, result: { conversationId: "native", ...(provider ? { provider } : {}) } }) });
+      expect(await runCli(["attach"], api, terminal)).toBe(0);
+      expect(calls).toEqual([["native", provider ?? "agy"]]);
+    }
+  });
   test("renders human history", async () => {
     const { io, stdout } = fakeIo();
     expect(await runCli(["history", "2"], fakeApi(), io)).toBe(0);

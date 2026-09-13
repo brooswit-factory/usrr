@@ -1,14 +1,15 @@
 import type { TranscriptEvent } from "../transcript";
+import type { ManagedAgentProvider } from "@brooswit/drovr";
 
 export type AgentStatus = "absent" | "idle" | "working" | "error";
-export interface PublicStatus { readonly status: AgentStatus; readonly updatedAt: string; readonly error?: string }
+export interface PublicStatus { readonly status: AgentStatus; readonly updatedAt: string; readonly error?: string; readonly provider?: ManagedAgentProvider }
 export type ApiErrorKind = "absent" | "busy" | "invalid-request" | "agent-failed" | "internal-error";
 export interface ApiError { readonly kind: ApiErrorKind; readonly message: string }
 export type ApiResult<T> = { readonly ok: true; readonly result: T } | { readonly ok: false; readonly error: ApiError };
 export type StatusResult = ApiResult<PublicStatus>;
 export type MessageResult = ApiResult<{ readonly accepted: true; readonly response?: string }>;
 export type WaitResult = ApiResult<PublicStatus>;
-export type AttachTargetResult = ApiResult<{ readonly conversationId: string }>;
+export type AttachTargetResult = ApiResult<{ readonly conversationId: string; readonly provider?: ManagedAgentProvider }>;
 export type HistoryResult = ApiResult<{ readonly events: readonly TranscriptEvent[] }>;
 
 export const API_ROUTES = {

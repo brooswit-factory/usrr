@@ -1,4 +1,4 @@
-import { AgyRunner } from "./agy";
+import { conversationRunner } from "./conversation";
 import { startApiServer } from "./api/server";
 import { log } from "./log";
 import { agentCwd, socketPath, statePath, transcriptPath } from "./paths";
@@ -12,10 +12,11 @@ async function main(): Promise<void> {
   const recovered = recoverState(await loadState(resolvedStatePath));
   await saveState(resolvedStatePath, recovered);
   const transcript = await TranscriptStore.open(transcriptPath());
-  const service = new UsrrService(recovered, resolvedStatePath, new AgyRunner(agentCwd()), transcript);
+  const cwd = agentCwd();
+  const service = new UsrrService(recovered, resolvedStatePath, provider => conversationRunner(provider, cwd), transcript, undefined, undefined, cwd);
   const started = await startApiServer(service, resolvedSocketPath);
   if (!started.ok) throw new Error(started.error);
-  log("info", `USRR daemon started: state="${resolvedStatePath}" socket="${resolvedSocketPath}" agent=agy`);
+  log("info", `USRR daemon started: state="${resolvedStatePath}" socket="${resolvedSocketPath}" agent=${recovered.provider ?? (recovered.conversationId ? "agy" : "unselected")}`);
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals): void => {
     if (shuttingDown) return;

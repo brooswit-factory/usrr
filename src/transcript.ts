@@ -1,7 +1,7 @@
 import { chmod, mkdir, open, readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
-export type TranscriptRole = "user" | "assistant" | "error";
+export type TranscriptRole = "user" | "assistant" | "error" | "handoff";
 
 export interface TranscriptEvent {
   readonly version: 1;
@@ -28,7 +28,7 @@ function isTranscriptEvent(value: unknown): value is TranscriptEvent {
     && Number.isSafeInteger(event.sequence)
     && (event.sequence ?? 0) > 0
     && typeof event.timestamp === "string"
-    && (event.role === "user" || event.role === "assistant" || event.role === "error")
+    && (event.role === "user" || event.role === "assistant" || event.role === "error" || event.role === "handoff")
     && typeof event.text === "string"
     && (event.replyTo === undefined || (Number.isSafeInteger(event.replyTo) && event.replyTo > 0));
 }

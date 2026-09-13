@@ -1,9 +1,14 @@
-import type { AgyRunner } from "./agy";
+import { processProviderAvailability, runWithProviderFallback, type ManagedAgentProvider, type ManagedConversationRunner, type ProviderAvailabilityRegistry } from "@brooswit/drovr";
+import { providerOrder } from "./providers";
+import { conversationHandoff, HANDOFF_EVENT_LIMIT } from "./handoff";
+import { agentCwd } from "./paths";
 import type { ApiError, AttachTargetResult, HistoryResult, MessageResult, PublicStatus, WaitResult } from "./api/contract";
 import { publicStatus, saveState, type PersistedState } from "./state";
 import type { TranscriptEvent, TranscriptStore } from "./transcript";
 
 const failure = (kind: ApiError["kind"], message: string): { ok: false; error: ApiError } => ({ ok: false, error: { kind, message } });
+
+export type ConversationFactory = (provider: ManagedAgentProvider) => Pick<ManagedConversationRunner, "message">;
 
 export class UsrrService {
   private active: Promise<void> | undefined;
@@ -11,8 +16,11 @@ export class UsrrService {
   constructor(
     private state: PersistedState,
     private readonly statePath: string,
-    private readonly agent: AgyRunner,
+    private readonly createRunner: ConversationFactory,
     private readonly transcript: TranscriptStore,
+    private readonly providers: readonly ManagedAgentProvider[] = providerOrder(),
+    private readonly availability: ProviderAvailabilityRegistry = processProviderAvailability,
+    private readonly cwd: string = agentCwd(),
   ) {}
 
   status(): PublicStatus { return publicStatus(this.state); }
@@ -29,6 +37,7 @@ export class UsrrService {
       status: "working",
       updatedAt: new Date().toISOString(),
       ...(this.state.conversationId ? { conversationId: this.state.conversationId } : {}),
+      ...(this.state.provider ? { provider: this.state.provider } : {}),
     };
     this.state = workingState;
     let response = "";
@@ -40,10 +49,32 @@ export class UsrrService {
     const operation = (async () => {
       try {
         await accepted;
-        const result = await this.agent.message(text, this.state.conversationId);
+        const nativeProvider = this.state.conversationId ? this.state.provider ?? "agy" : undefined;
+        const priority = nativeProvider ? [nativeProvider, ...this.providers] : this.providers;
+        const outcome = await runWithProviderFallback({
+          priority: priority.map(provider => ({ provider, accountId: "usrr-personal" })),
+          availability: this.availability,
+          attempt: async ({ provider }) => {
+            const resume = provider === nativeProvider ? this.state.conversationId : undefined;
+            let prompt = text;
+            if (nativeProvider && provider !== nativeProvider) {
+              const history = (await this.transcript.history(HANDOFF_EVENT_LIMIT + 1)).filter(event => event.sequence < userEvent!.sequence);
+              prompt = conversationHandoff({ from: nativeProvider, to: provider, cwd: this.cwd, history, message: text });
+              await this.transcript.append({ role: "handoff", replyTo: userEvent!.sequence,
+                text: `Attempting a fresh ${provider} conversation from ${nativeProvider}; prior conversation ${this.state.conversationId} remains current until success.\n${prompt}` });
+            }
+            const value = await this.createRunner(provider).message(prompt, resume);
+            return { status: "success" as const, value };
+          },
+        });
+        if (outcome.status === "exhausted") throw new Error("USRR providers exhausted; current conversation retained");
+        const provider = outcome.account.provider;
+        const result = outcome.value;
         response = result.response;
+        // Keep the returned native ID even if appending the response fails.
+        await this.persist({ version: 1, provider, conversationId: result.conversationId, status: "working", updatedAt: new Date().toISOString() });
         await this.transcript.append({ role: "assistant", text: result.response, replyTo: userEvent!.sequence });
-        await this.persist({ version: 1, conversationId: result.conversationId, status: "idle", updatedAt: new Date().toISOString() });
+        await this.persist({ version: 1, provider, conversationId: result.conversationId, status: "idle", updatedAt: new Date().toISOString() });
       } catch (cause) {
         if (userEvent) {
           await this.transcript.append({
@@ -57,6 +88,7 @@ export class UsrrService {
           status: "error",
           updatedAt: new Date().toISOString(),
           ...(this.state.conversationId ? { conversationId: this.state.conversationId } : {}),
+          ...(this.state.provider ? { provider: this.state.provider } : {}),
           error: cause instanceof Error ? cause.message : String(cause),
         });
         throw cause;
@@ -111,6 +143,6 @@ export class UsrrService {
   attachTarget(): AttachTargetResult {
     if (this.active) return failure("busy", "USRR is working; wait before attaching");
     if (!this.state.conversationId) return failure("absent", "USRR has no conversation yet; send its first message before attaching");
-    return { ok: true, result: { conversationId: this.state.conversationId } };
+    return { ok: true, result: { conversationId: this.state.conversationId, provider: this.state.provider ?? "agy" } };
   }
 }

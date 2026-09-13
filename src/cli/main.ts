@@ -2,13 +2,14 @@ import type { ApiResult } from "../api/contract";
 import type { ApiClient, CallResult } from "./api-client";
 import { parseArgv } from "./grammar";
 import type { TranscriptEvent } from "../transcript";
+import type { ManagedAgentProvider } from "@brooswit/drovr";
 
 export interface CliIO {
   readonly stdinIsTTY: boolean;
   readonly stdoutIsTTY: boolean;
   writeOut(text: string): void;
   writeErr(text: string): void;
-  attach(conversationId: string): Promise<number>;
+  attach(conversationId: string, provider?: ManagedAgentProvider): Promise<number>;
 }
 
 function unwrap<T>(call: CallResult<ApiResult<T>>, io: CliIO): { ok: true; result: T } | { ok: false; exitCode: number } {
@@ -57,5 +58,5 @@ export async function runCli(argv: readonly string[], api: ApiClient, io: CliIO)
   }
   if (!io.stdinIsTTY || !io.stdoutIsTTY) { io.writeErr("usrr: attach requires an interactive terminal\n"); return 1; }
   const result = unwrap(await api.attachTarget(), io); if (!result.ok) return result.exitCode;
-  return await io.attach(result.result.conversationId);
+  return await io.attach(result.result.conversationId, result.result.provider ?? "agy");
 }
