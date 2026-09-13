@@ -74,6 +74,17 @@ test("failed handoff retains old ID and never infers quota from arbitrary errors
   expect(f.availability.get({ provider: "codex", accountId: "usrr-personal" }).status).toBe("available");
 });
 
+test("default order reaches Claude only when Antigravity and Codex are explicitly unavailable", async () => {
+  const f = await fixture();
+  for (const provider of ["agy", "codex"] as const) {
+    f.availability.markQuotaBlocked({ provider, accountId: "usrr-personal" }, { resetsAt: null, raw: "explicit test account state" });
+  }
+  const service = new UsrrService(emptyState(), f.path, f.runner, f.transcript, undefined, f.availability);
+  expect((await service.message("continue", true)).ok).toBe(true);
+  expect(f.calls.map(call => call.provider)).toEqual(["claude"]);
+  expect(await loadState(f.path)).toMatchObject({ provider: "claude", conversationId: "claude-native" });
+});
+
 test("all exhausted does not launch or discard native conversation", async () => {
   const f = await fixture();
   for (const provider of ["agy", "codex", "claude"] as const) f.availability.markQuotaBlocked({ provider, accountId: "usrr-personal" }, { resetsAt: null, raw: "explicit account state" });
