@@ -1,5 +1,6 @@
 import * as http from "node:http";
-import { API_ROUTES, type AttachTargetResult, type HistoryResult, type MessageResult, type StatusResult, type WaitResult } from "../api/contract";
+import { API_ROUTES, type AttachTargetResult, type HistoryResult, type MessageResult, type StatusResult, type SwitchResult, type WaitResult } from "../api/contract";
+import type { ManagedAgentProvider } from "@brooswit/drovr";
 import type { TranscriptEvent } from "../transcript";
 
 export type CallResult<T> = { transport: "ok"; status: number; body: T } | { transport: "unreachable"; detail: string } | { transport: "protocol-error"; detail: string };
@@ -29,6 +30,7 @@ function call<T>(socketPath: string, method: string, path: string, body: unknown
 export function createApiClient(socketPath: string) {
   return {
     status: () => call<StatusResult>(socketPath, API_ROUTES.status.method, API_ROUTES.status.path, undefined),
+    switchProvider: (provider: ManagedAgentProvider) => call<SwitchResult>(socketPath, API_ROUTES.switch.method, API_ROUTES.switch.path, { provider }, 10 * 60_000),
     message: (text: string, wait: boolean) => call<MessageResult>(socketPath, API_ROUTES.message.method, API_ROUTES.message.path, { text, wait }, wait ? 10 * 60_000 : 10_000),
     wait: (timeoutMs: number) => call<WaitResult>(socketPath, API_ROUTES.wait.method, API_ROUTES.wait.path, { timeoutMs }, timeoutMs + 10_000),
     attachTarget: () => call<AttachTargetResult>(socketPath, API_ROUTES.attachTarget.method, API_ROUTES.attachTarget.path, undefined),

@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { parseArgv } from "../src/cli/grammar";
 
 describe("CLI grammar", () => {
+  test("parses only supported explicit provider switches", () => {
+    for (const provider of ["agy", "codex", "claude"] as const) expect(parseArgv(["switch", provider])).toEqual({ ok: true, command: { kind: "switch", provider } });
+    for (const args of [["switch"], ["switch", "other"], ["switch", "codex", "extra"]]) expect(parseArgv(args).ok).toBe(false);
+  });
   test("bare usrr attaches", () => expect(parseArgv([])).toEqual({ ok: true, command: { kind: "attach" } }));
   test("parses message modes", () => {
     expect(parseArgv(["message", "hello", "there"])).toEqual({ ok: true, command: { kind: "message", text: "hello there", wait: true } });

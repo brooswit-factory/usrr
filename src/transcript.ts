@@ -115,10 +115,10 @@ export class TranscriptStore {
     return appended!;
   }
 
-  async history(limit: number): Promise<TranscriptEvent[]> {
+  async history(limit?: number): Promise<TranscriptEvent[]> {
     await this.appendQueue;
     const parsed = parseTranscript(await readContents(this.path));
-    return parsed.events.slice(-limit);
+    return limit === undefined ? parsed.events : parsed.events.slice(-limit);
   }
 
   subscribe(listener: Listener): () => void {

@@ -31,6 +31,10 @@ export async function runCli(argv: readonly string[], api: ApiClient, io: CliIO)
   const parsed = parseArgv(argv);
   if (!parsed.ok) { io.writeErr(`${parsed.error}\n`); return 2; }
   const command = parsed.command;
+  if (command.kind === "switch") {
+    const result = unwrap(await api.switchProvider(command.provider), io); if (!result.ok) return result.exitCode;
+    io.writeOut(`${result.result.provider}\n`); return 0;
+  }
   if (command.kind === "status") {
     const result = unwrap(await api.status(), io); if (!result.ok) return result.exitCode;
     io.writeOut(command.json ? `${JSON.stringify(result.result, null, 2)}\n` : `${result.result.status}\n`); return 0;
@@ -45,7 +49,10 @@ export async function runCli(argv: readonly string[], api: ApiClient, io: CliIO)
   }
   if (command.kind === "history") {
     const result = unwrap(await api.history(command.limit), io); if (!result.ok) return result.exitCode;
-    if (command.json) io.writeOut(`${JSON.stringify(result.result.events, null, 2)}\n`);
+    if (result.result.nativeTranscript !== undefined) io.writeOut(command.json
+      ? `${JSON.stringify({ nativeTranscript: result.result.nativeTranscript }, null, 2)}\n`
+      : result.result.nativeTranscript + (result.result.nativeTranscript.endsWith("\n") ? "" : "\n"));
+    else if (command.json) io.writeOut(`${JSON.stringify(result.result.events, null, 2)}\n`);
     else if (result.result.events.length === 0) io.writeOut("No transcript events.\n");
     else io.writeOut(result.result.events.map(renderTranscriptEvent).join("\n"));
     return 0;
