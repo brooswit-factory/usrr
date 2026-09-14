@@ -1,8 +1,7 @@
-import { processProviderAvailability, runWithProviderFallback, type ManagedAgentProvider, type ManagedConversationRunner, type ProviderAvailabilityRegistry } from "@brooswit/drovr";
+import { ManagedConversationLifecycle, NativeTranscriptUnavailableError, readNativeTranscript, processProviderAvailability, type ManagedAgentProvider, type ManagedConversationRunner, type ProviderAvailabilityRegistry } from "@brooswit/drovr";
 import { providerOrder } from "./providers";
-import { conversationHandoff, HANDOFF_EVENT_LIMIT } from "./handoff";
 import { agentCwd } from "./paths";
-import type { ApiError, AttachTargetResult, HistoryResult, MessageResult, PublicStatus, WaitResult } from "./api/contract";
+import type { ApiError, AttachTargetResult, HistoryResult, MessageResult, PublicStatus, SwitchResult, WaitResult } from "./api/contract";
 import { publicStatus, saveState, type PersistedState } from "./state";
 import type { TranscriptEvent, TranscriptStore } from "./transcript";
 
@@ -12,22 +11,62 @@ export type ConversationFactory = (provider: ManagedAgentProvider) => Pick<Manag
 
 export class UsrrService {
   private active: Promise<void> | undefined;
+  private readonly lifecycle: ManagedConversationLifecycle;
 
   constructor(
     private state: PersistedState,
     private readonly statePath: string,
-    private readonly createRunner: ConversationFactory,
+    createRunner: ConversationFactory,
     private readonly transcript: TranscriptStore,
-    private readonly providers: readonly ManagedAgentProvider[] = providerOrder(),
-    private readonly availability: ProviderAvailabilityRegistry = processProviderAvailability,
+    providers: readonly ManagedAgentProvider[] = providerOrder(),
+    availability: ProviderAvailabilityRegistry = processProviderAvailability,
     private readonly cwd: string = agentCwd(),
-  ) {}
+    private readonly nativeTranscriptReader: typeof readNativeTranscript = readNativeTranscript,
+  ) {
+    this.lifecycle = new ManagedConversationLifecycle({
+      ...(state.conversationId ? { current: { provider: state.provider ?? "agy", conversationId: state.conversationId } } : {}),
+      cwd, providers, availability, accountId: "usrr-personal", createRunner, readNativeTranscript: nativeTranscriptReader,
+      readTranscript: async beforeSequence => JSON.stringify((await transcript.history()).filter(event =>
+        (event.role === "user" || event.role === "assistant") && (beforeSequence === undefined || event.sequence < beforeSequence))),
+      commit: async (identity, context) => {
+        if (context.kind === "handoff") {
+          await transcript.append({ role: "handoff",
+            ...(context.beforeSequence === undefined ? {} : { replyTo: context.beforeSequence }),
+            text: JSON.stringify({ reason: context.reason, previous: context.previous ?? null, next: identity }),
+          });
+        }
+        await this.persist({ version: 1, ...identity, status: "working", updatedAt: new Date().toISOString() });
+      },
+    });
+  }
 
   status(): PublicStatus { return publicStatus(this.state); }
 
   private async persist(next: PersistedState): Promise<void> {
     await saveState(this.statePath, next);
     this.state = next;
+  }
+
+  async switchProvider(provider: ManagedAgentProvider): Promise<SwitchResult> {
+    if (this.active) return failure("busy", "USRR is already working");
+    const operation = Promise.resolve().then(async () => {
+      try {
+        const { error: _error, ...previous } = this.state;
+        await this.persist({ ...previous, status: "working", updatedAt: new Date().toISOString() });
+        const reason = "Explicit USRR provider switch";
+        const current = await this.lifecycle.switchProvider(provider, reason);
+        await this.persist({ version: 1, ...current, status: "idle", updatedAt: new Date().toISOString() });
+        return current;
+      } catch (cause) {
+        await this.persist({ ...this.state, status: "error", error: cause instanceof Error ? cause.message : String(cause), updatedAt: new Date().toISOString() });
+        throw cause;
+      } finally {
+        this.active = undefined;
+      }
+    });
+    this.active = operation.then(() => {}, () => {});
+    try { return { ok: true, result: await operation }; }
+    catch (cause) { return failure("agent-failed", cause instanceof Error ? cause.message : String(cause)); }
   }
 
   private startMessage(text: string): { accepted: Promise<void>; completed: Promise<{ response: string }> } {
@@ -49,32 +88,10 @@ export class UsrrService {
     const operation = (async () => {
       try {
         await accepted;
-        const nativeProvider = this.state.conversationId ? this.state.provider ?? "agy" : undefined;
-        const priority = nativeProvider ? [nativeProvider, ...this.providers] : this.providers;
-        const outcome = await runWithProviderFallback({
-          priority: priority.map(provider => ({ provider, accountId: "usrr-personal" })),
-          availability: this.availability,
-          attempt: async ({ provider }) => {
-            const resume = provider === nativeProvider ? this.state.conversationId : undefined;
-            let prompt = text;
-            if (nativeProvider && provider !== nativeProvider) {
-              const history = (await this.transcript.history(HANDOFF_EVENT_LIMIT + 1)).filter(event => event.sequence < userEvent!.sequence);
-              prompt = conversationHandoff({ from: nativeProvider, to: provider, cwd: this.cwd, history, message: text });
-              await this.transcript.append({ role: "handoff", replyTo: userEvent!.sequence,
-                text: `Attempting a fresh ${provider} conversation from ${nativeProvider}; prior conversation ${this.state.conversationId} remains current until success.\n${prompt}` });
-            }
-            const value = await this.createRunner(provider).message(prompt, resume);
-            return { status: "success" as const, value };
-          },
-        });
-        if (outcome.status === "exhausted") throw new Error("USRR providers exhausted; current conversation retained");
-        const provider = outcome.account.provider;
-        const result = outcome.value;
+        const result = await this.lifecycle.message(text, { beforeSequence: userEvent!.sequence, reason: "USRR provider fallback" });
         response = result.response;
-        // Keep the returned native ID even if appending the response fails.
-        await this.persist({ version: 1, provider, conversationId: result.conversationId, status: "working", updatedAt: new Date().toISOString() });
         await this.transcript.append({ role: "assistant", text: result.response, replyTo: userEvent!.sequence });
-        await this.persist({ version: 1, provider, conversationId: result.conversationId, status: "idle", updatedAt: new Date().toISOString() });
+        await this.persist({ version: 1, ...this.lifecycle.current!, status: "idle", updatedAt: new Date().toISOString() });
       } catch (cause) {
         if (userEvent) {
           await this.transcript.append({
@@ -133,6 +150,15 @@ export class UsrrService {
   }
 
   async history(limit: number): Promise<HistoryResult> {
+    const current = this.lifecycle.current;
+    if (current) {
+      try {
+        const nativeTranscript = await this.nativeTranscriptReader({ provider: current.provider, session: { kind: "id", value: current.conversationId }, cwd: this.cwd });
+        return { ok: true, result: { events: [], nativeTranscript } };
+      } catch (cause) {
+        if (!(cause instanceof NativeTranscriptUnavailableError)) throw cause;
+      }
+    }
     return { ok: true, result: { events: await this.transcript.history(limit) } };
   }
 

@@ -83,6 +83,7 @@ describe("UsrrService", () => {
       expect.objectContaining({ sequence: 1, role: "user", text: "hello" }),
     ]);
     expect((await service.message("collision", true)).ok).toBe(false);
+    expect(await service.switchProvider("codex")).toMatchObject({ ok: false, error: { kind: "busy" } });
     release();
     expect((await service.waitUntilIdle(1000)).ok).toBe(true);
     const history = await service.history(10);

@@ -1,4 +1,7 @@
+import type { ManagedAgentProvider } from "@brooswit/drovr";
+
 export type ParsedCommand =
+  | { kind: "switch"; provider: ManagedAgentProvider }
   | { kind: "attach" }
   | { kind: "status"; json: boolean }
   | { kind: "message"; text: string; wait: boolean }
@@ -35,6 +38,11 @@ export function parseArgv(argv: readonly string[]): ParseResult {
     if (!text) return { ok: false, error: "usage: usrr message [--no-wait] <text>" };
     return { ok: true, command: { kind: "message", text, wait } };
   }
+  if (argv[0] === "switch") {
+    const provider = argv[1];
+    if (argv.length !== 2 || (provider !== "agy" && provider !== "codex" && provider !== "claude")) return { ok: false, error: "usage: usrr switch <agy|codex|claude>" };
+    return { ok: true, command: { kind: "switch", provider } };
+  }
   if (argv[0] === "wait") {
     if (argv.length > 2) return { ok: false, error: "usage: usrr wait [seconds]" };
     const seconds = argv[1] === undefined ? 300 : Number(argv[1]);
@@ -47,5 +55,5 @@ export function parseArgv(argv: readonly string[]): ParseResult {
     if (argv.length === 2 && argv[1] === "--json") return { ok: true, command: { kind: "follow", json: true } };
     return { ok: false, error: "usage: usrr follow [--json]" };
   }
-  return { ok: false, error: "usage: usrr [attach] | status [--json] | message [--no-wait] <text> | wait [seconds] | history [limit] [--json] | follow [--json]" };
+  return { ok: false, error: "usage: usrr [attach] | status [--json] | message [--no-wait] <text> | switch <agy|codex|claude> | wait [seconds] | history [limit] [--json] | follow [--json]" };
 }

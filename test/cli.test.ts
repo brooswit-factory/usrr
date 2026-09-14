@@ -16,6 +16,7 @@ function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     status: () => successful({ ok: true, result: { status: "idle", updatedAt: "now" } }),
     message: () => successful({ ok: true, result: { accepted: true } }),
+    switchProvider: provider => successful({ ok: true, result: { provider, conversationId: "switched" } }),
     wait: () => successful({ ok: true, result: { status: "idle", updatedAt: "now" } }),
     attachTarget: () => successful({ ok: true, result: { conversationId: "conversation" } }),
     history: () => successful({ ok: true, result: { events } }),
@@ -44,6 +45,17 @@ function fakeIo(): { io: CliIO; stdout: string[]; stderr: string[] } {
 }
 
 describe("history and follow CLI", () => {
+  test("explicit switch calls the API without attaching or sending work", async () => {
+    const { io, stdout } = fakeIo();
+    const calls: string[] = [];
+    const api = fakeApi({ switchProvider: provider => {
+      calls.push(provider);
+      return successful({ ok: true, result: { provider, conversationId: "new" } });
+    }, message: () => { throw new Error("unexpected task"); } });
+    expect(await runCli(["switch", "claude"], api, io)).toBe(0);
+    expect(calls).toEqual(["claude"]);
+    expect(stdout.join("")).toBe("claude\n");
+  });
   test("attach uses the daemon's native provider, defaulting legacy targets to AGY", async () => {
     for (const provider of [undefined, "agy", "codex", "claude"] as const) {
       const { io } = fakeIo();
@@ -60,6 +72,16 @@ describe("history and follow CLI", () => {
     const rendered = stdout.join("");
     expect(rendered).toContain("USER #1\nhello");
     expect(rendered).toContain("ASSISTANT #2 reply-to=1\nhi");
+  });
+
+  test("native history is displayed in full and preserved in JSON output", async () => {
+    const nativeTranscript = "interactive-first\n" + "x".repeat(60_000) + "\ninteractive-last\n";
+    for (const json of [false, true]) {
+      const { io, stdout } = fakeIo();
+      const api = fakeApi({ history: () => successful({ ok: true, result: { events: [], nativeTranscript } }) });
+      expect(await runCli(json ? ["history", "1", "--json"] : ["history", "1"], api, io)).toBe(0);
+      expect(json ? JSON.parse(stdout.join("")).nativeTranscript : stdout.join("")).toBe(nativeTranscript);
+    }
   });
 
   test("renders history as a JSON array", async () => {

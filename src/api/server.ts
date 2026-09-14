@@ -88,6 +88,13 @@ export async function startApiServer(service: UsrrService, socketPath: string): 
           }
           return apiResponse(await service.message(body.text, body.wait !== false));
         }
+        if (request.method === API_ROUTES.switch.method && url.pathname === API_ROUTES.switch.path) {
+          const body = await bodyObject(request);
+          if (!body || (body.provider !== "agy" && body.provider !== "codex" && body.provider !== "claude")) {
+            return apiResponse({ ok: false, error: { kind: "invalid-request", message: "switch requires provider agy, codex, or claude" } });
+          }
+          return apiResponse(await service.switchProvider(body.provider));
+        }
         if (request.method === API_ROUTES.wait.method && url.pathname === API_ROUTES.wait.path) {
           const body = await bodyObject(request);
           if (!body || typeof body.timeoutMs !== "number" || !Number.isFinite(body.timeoutMs) || body.timeoutMs < 0) {
