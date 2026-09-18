@@ -1,7 +1,8 @@
 import { conversationRunner } from "./conversation";
 import { startApiServer } from "./api/server";
+import { startMcpAndInbox } from "./inbox";
 import { log } from "./log";
-import { agentCwd, socketPath, statePath, transcriptPath } from "./paths";
+import { agentCwd, mcpConfigPath, socketPath, statePath, transcriptPath } from "./paths";
 import { UsrrService } from "./service";
 import { loadState, recoverState, saveState } from "./state";
 import { TranscriptStore } from "./transcript";
@@ -17,16 +18,19 @@ async function main(): Promise<void> {
   const started = await startApiServer(service, resolvedSocketPath);
   if (!started.ok) throw new Error(started.error);
   log("info", `USRR daemon started: state="${resolvedStatePath}" socket="${resolvedSocketPath}" agent=${recovered.provider ?? (recovered.conversationId ? "agy" : "unselected")}`);
+  // usrrDeliver posts to this same socket, so the relay starts only once the API server is listening.
+  const inbox = await startMcpAndInbox({ configPath: mcpConfigPath(), agentCwd: cwd, socketPath: resolvedSocketPath });
   let shuttingDown = false;
-  const shutdown = (signal: NodeJS.Signals): void => {
+  const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     log("info", `received ${signal}, shutting down`);
+    await inbox.stop();
     started.handle.stop();
     process.exit(0);
   };
-  process.on("SIGINT", () => shutdown("SIGINT"));
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
 main().catch((cause) => {

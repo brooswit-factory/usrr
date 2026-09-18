@@ -77,6 +77,30 @@ rollout. Older USRR versions cannot parse `handoff` transcript events or attach
 non-AGY conversations correctly; rollback after a switch requires retaining the
 new logs and explicitly restoring an appropriate native conversation/state.
 
+## agy MCP Provisioning And The Rocketr Relay
+
+At startup, after the API server is listening, the daemon reads `.mcp.json`
+(path configurable with `USRR_MCP_CONFIG`; defaults to `.mcp.json` at the repo
+root, resolved from the daemon's own source location rather than its working
+directory). Every server it names is written into agy's own MCP
+configuration with `applyMcpAccess("agy", …)` — servers not named, and
+servers for other providers, are left untouched. A running agy session picks
+this up only on its next turn; nothing is restarted. Only a server named
+`rocketr` also gets a live relay: `keepChannelSource` holds a reconnecting
+MCP connection to it, and `InboxRelay` delivers each message as a turn
+through this daemon's own `/v1/message` socket API, in order, retrying a busy
+answer and dropping (and logging) a rejected or repeatedly-failing one. On
+`SIGTERM`/`SIGINT` the relay and its channel connection are stopped before
+the API server, so nothing is left delivering into a socket that is going
+away.
+
+A missing `.mcp.json` is the normal case for a clean checkout, CI, or any
+machine without a deployment-local file: the daemon logs it and starts
+normally, with no agy provisioning and no relay. An unparseable file, or a
+server definition Drovr refuses (e.g. `"type": "sse"`), does the same, logged
+as an error. `.mcp.json` is deployment-local — it names the rocketr account
+and its headers, never hard-coded — and is not checked into this repo.
+
 ## Commands
 
 ```bash
