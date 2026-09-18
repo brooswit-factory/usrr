@@ -94,12 +94,44 @@ answer and dropping (and logging) a rejected or repeatedly-failing one. On
 the API server, so nothing is left delivering into a socket that is going
 away.
 
-A missing `.mcp.json` is the normal case for a clean checkout, CI, or any
-machine without a deployment-local file: the daemon logs it and starts
-normally, with no agy provisioning and no relay. An unparseable file, or a
-server definition Drovr refuses (e.g. `"type": "sse"`), does the same, logged
-as an error. `.mcp.json` is deployment-local — it names the rocketr account
-and its headers, never hard-coded — and is not checked into this repo.
+**No host anyone has been able to check runs with `.mcp.json` present today**,
+so the missing-file path below is not an edge case here — it is the only path
+any current deployment actually exercises, and is treated as such in the
+tests. A missing `.mcp.json` logs at info and the daemon starts normally, with
+no agy provisioning and no relay. An unparseable file, or a server definition
+Drovr refuses (e.g. `"type": "sse"`), does the same, logged as an error.
+`.mcp.json` is deployment-local, is not checked into this repo, and is
+intentionally not gitignored either (nothing here names a path that doesn't
+exist to ignore); this is a call the PR makes rather than decides silently —
+say if you'd rather usrr ship an `.mcp.json.example`.
+
+**To activate this feature on a deployment**, three things must all be true,
+and none of them exist anywhere in this repo or on any host checked so far:
+
+1. `USRR_AGENT_PROVIDERS` includes `agy` (agy is the only provider this
+   provisions; a Claude- or Codex-only deployment gets nothing from it).
+2. A `.mcp.json` exists at the repo root (or at `USRR_MCP_CONFIG`), naming a
+   `rocketr` server, e.g.:
+   ```json
+   {
+     "mcpServers": {
+       "rocketr": {
+         "type": "http",
+         "url": "http://127.0.0.1:8790/mcp",
+         "headers": { "x-rocketr-account": "<this resident's account>" }
+       }
+     }
+   }
+   ```
+   The account and its headers are always read from this file, never
+   hard-coded.
+3. Because every opted-in connection for a rocketr account receives every
+   frame, that file's rocketr entry should be tools-only for agy's own
+   session (no `x-rocketr-channel: on`) once DROVR-20 lands — this daemon
+   forwards whatever headers the file names verbatim and does not filter
+   them itself, so a file written with the channel header on before then
+   risks agy's own connection double-receiving messages already relayed as
+   turns. No deployment checked so far has this header at all.
 
 ## Commands
 
