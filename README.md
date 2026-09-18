@@ -91,15 +91,29 @@ MCP connection to it, and `InboxRelay` delivers each message as a turn
 through this daemon's own `/v1/message` socket API, in order, retrying a busy
 answer and dropping (and logging) a rejected or repeatedly-failing one.
 
-**The relay holds a single long-lived channel source for the daemon's entire
-lifetime**, created once at start and never torn down or re-created per turn,
-per message, or on a provider switch — that stream must stay open, because
-rocketr (thatch 0.7.0+) reaps a connection that never opens or holds its
-notification stream as `stale`, and a reaped relay goes silent with no error
-at all. On `SIGTERM`/`SIGINT` that same source and the relay are stopped
-before the API server, so nothing is left delivering into a socket that is
-going away, and no connection is leaked on an account that must end up
-holding exactly one live connection.
+**One source, supervised for the daemon's lifetime and closed on SIGTERM.**
+It is created once at start and never torn down or re-created per turn, per
+message, or on a provider switch; on `SIGTERM`/`SIGINT` it and the relay are
+stopped before the API server, so nothing is left delivering into a socket
+that is going away, and no connection is leaked on an account that must end
+up holding exactly one live connection. (That close is given a bounded wait —
+if the transport never settles, shutdown logs and continues rather than
+hanging until systemd's stop timeout.)
+
+**Note this describes the supervision, not a liveness guarantee: the source
+reconnects when the transport reports a close or an error, and nothing
+currently detects a connection that stops delivering without reporting
+either.** That distinction matters here because rocketr (thatch 0.7.0+) reaps
+a connection that does not hold its notification stream, as `stale` — and
+whether such a reap is observable to this client at all is currently
+unmeasured. If it surfaces as a close or an error, the reconnect loop
+recovers a new session (proven by test, including the case where the old
+session id then 404s after a rocketr restart). If it is silent, nothing
+fires, the last reported status stays `connected`, and the relay goes deaf
+while looking healthy. **A quiet relay is therefore not evidence of a quiet
+channel.** No mitigation for that second case exists anywhere yet;
+a liveness mechanism belongs in Drovr's relay core, designed once, rather
+than improvised per consumer.
 
 **No host anyone has been able to check runs with `.mcp.json` present today**,
 so the missing-file path below is not an edge case here — it is the only path
@@ -139,6 +153,19 @@ and none of them exist anywhere in this repo or on any host checked so far:
    them itself, so a file written with the channel header on before then
    risks agy's own connection double-receiving messages already relayed as
    turns. No deployment checked so far has this header at all.
+
+**This provisioning is account-wide, not scoped to usrr.** `applyMcpAccess`
+writes agy's own configuration under the daemon's **real `HOME`**
+(`~/.gemini/config/mcp_config.json` and
+`~/.gemini/antigravity-cli/settings.json`) — that is where agy reads it from,
+so there is nowhere else to put it. The consequence is worth stating plainly
+before you deploy: **every agy run by that Unix user, not just usrr's, then
+inherits usrr's `rocketr` entry — and with it usrr's `x-rocketr-account`
+identity.** A person running `agy` interactively as the same user would be
+acting as that account without anything on screen saying so. So either run
+usrr as a dedicated Unix user, or accept that every agy for this user speaks
+as `@usrr-…`. There is no third option today, and no code here can create one:
+the file location is agy's, not usrr's.
 
 ## Commands
 
