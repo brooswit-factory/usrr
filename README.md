@@ -89,10 +89,17 @@ this up only on its next turn; nothing is restarted. Only a server named
 `rocketr` also gets a live relay: `keepChannelSource` holds a reconnecting
 MCP connection to it, and `InboxRelay` delivers each message as a turn
 through this daemon's own `/v1/message` socket API, in order, retrying a busy
-answer and dropping (and logging) a rejected or repeatedly-failing one. On
-`SIGTERM`/`SIGINT` the relay and its channel connection are stopped before
-the API server, so nothing is left delivering into a socket that is going
-away.
+answer and dropping (and logging) a rejected or repeatedly-failing one.
+
+**The relay holds a single long-lived channel source for the daemon's entire
+lifetime**, created once at start and never torn down or re-created per turn,
+per message, or on a provider switch — that stream must stay open, because
+rocketr (thatch 0.7.0+) reaps a connection that never opens or holds its
+notification stream as `stale`, and a reaped relay goes silent with no error
+at all. On `SIGTERM`/`SIGINT` that same source and the relay are stopped
+before the API server, so nothing is left delivering into a socket that is
+going away, and no connection is leaked on an account that must end up
+holding exactly one live connection.
 
 **No host anyone has been able to check runs with `.mcp.json` present today**,
 so the missing-file path below is not an edge case here — it is the only path
