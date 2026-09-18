@@ -77,6 +77,96 @@ rollout. Older USRR versions cannot parse `handoff` transcript events or attach
 non-AGY conversations correctly; rollback after a switch requires retaining the
 new logs and explicitly restoring an appropriate native conversation/state.
 
+## agy MCP Provisioning And The Rocketr Relay
+
+At startup, after the API server is listening, the daemon reads `.mcp.json`
+(path configurable with `USRR_MCP_CONFIG`; defaults to `.mcp.json` at the repo
+root, resolved from the daemon's own source location rather than its working
+directory). Every server it names is written into agy's own MCP
+configuration with `applyMcpAccess("agy", …)` — servers not named, and
+servers for other providers, are left untouched. A running agy session picks
+this up only on its next turn; nothing is restarted. Only a server named
+`rocketr` also gets a live relay: `keepChannelSource` holds a reconnecting
+MCP connection to it, and `InboxRelay` delivers each message as a turn
+through this daemon's own `/v1/message` socket API, in order, retrying a busy
+answer and dropping (and logging) a rejected or repeatedly-failing one.
+
+**One source, supervised for the daemon's lifetime and closed on SIGTERM.**
+It is created once at start and never torn down or re-created per turn, per
+message, or on a provider switch; on `SIGTERM`/`SIGINT` it and the relay are
+stopped before the API server, so nothing is left delivering into a socket
+that is going away, and no connection is leaked on an account that must end
+up holding exactly one live connection. (That close is given a bounded wait —
+if the transport never settles, shutdown logs and continues rather than
+hanging until systemd's stop timeout.)
+
+**Note this describes the supervision, not a liveness guarantee: the source
+reconnects when the transport reports a close or an error, and nothing
+currently detects a connection that stops delivering without reporting
+either.** That distinction matters here because rocketr (thatch 0.7.0+) reaps
+a connection that does not hold its notification stream, as `stale` — and
+whether such a reap is observable to this client at all is currently
+unmeasured. If it surfaces as a close or an error, the reconnect loop
+recovers a new session (proven by test, including the case where the old
+session id then 404s after a rocketr restart). If it is silent, nothing
+fires, the last reported status stays `connected`, and the relay goes deaf
+while looking healthy. **A quiet relay is therefore not evidence of a quiet
+channel.** No mitigation for that second case exists anywhere yet;
+a liveness mechanism belongs in Drovr's relay core, designed once, rather
+than improvised per consumer.
+
+**No host anyone has been able to check runs with `.mcp.json` present today**,
+so the missing-file path below is not an edge case here — it is the only path
+any current deployment actually exercises, and is treated as such in the
+tests. A missing `.mcp.json` logs at info and the daemon starts normally, with
+no agy provisioning and no relay. An unparseable file, or a server definition
+Drovr refuses (e.g. `"type": "sse"`), does the same, logged as an error.
+`.mcp.json` is deployment-local, is not checked into this repo, and is
+intentionally not gitignored either (nothing here names a path that doesn't
+exist to ignore); this is a call the PR makes rather than decides silently —
+say if you'd rather usrr ship an `.mcp.json.example`.
+
+**To activate this feature on a deployment**, three things must all be true,
+and none of them exist anywhere in this repo or on any host checked so far:
+
+1. `USRR_AGENT_PROVIDERS` includes `agy` (agy is the only provider this
+   provisions; a Claude- or Codex-only deployment gets nothing from it).
+2. A `.mcp.json` exists at the repo root (or at `USRR_MCP_CONFIG`), naming a
+   `rocketr` server, e.g.:
+   ```json
+   {
+     "mcpServers": {
+       "rocketr": {
+         "type": "http",
+         "url": "http://127.0.0.1:8790/mcp",
+         "headers": { "x-rocketr-account": "<this resident's account>" }
+       }
+     }
+   }
+   ```
+   The account and its headers are always read from this file, never
+   hard-coded.
+3. Because every opted-in connection for a rocketr account receives every
+   frame, that file's rocketr entry should be tools-only for agy's own
+   session (no `x-rocketr-channel: on`) once DROVR-20 lands — this daemon
+   forwards whatever headers the file names verbatim and does not filter
+   them itself, so a file written with the channel header on before then
+   risks agy's own connection double-receiving messages already relayed as
+   turns. No deployment checked so far has this header at all.
+
+**This provisioning is account-wide, not scoped to usrr.** `applyMcpAccess`
+writes agy's own configuration under the daemon's **real `HOME`**
+(`~/.gemini/config/mcp_config.json` and
+`~/.gemini/antigravity-cli/settings.json`) — that is where agy reads it from,
+so there is nowhere else to put it. The consequence is worth stating plainly
+before you deploy: **every agy run by that Unix user, not just usrr's, then
+inherits usrr's `rocketr` entry — and with it usrr's `x-rocketr-account`
+identity.** A person running `agy` interactively as the same user would be
+acting as that account without anything on screen saying so. So either run
+usrr as a dedicated Unix user, or accept that every agy for this user speaks
+as `@usrr-…`. There is no third option today, and no code here can create one:
+the file location is agy's, not usrr's.
+
 ## Commands
 
 ```bash
